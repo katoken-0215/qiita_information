@@ -6,7 +6,12 @@ require 'json'
 
 require 'bundler/setup'
 
+require 'capybara/poltergeist'
 require 'oga'
+
+Capybara.register_driver :poltergeist do |app|
+  Capybara::Poltergeist::Driver.new(app, {:js_errors => false, :timeout => 5 * 60 })
+end
 
 module QiitaInformation
   class Item
@@ -31,9 +36,27 @@ module QiitaInformation
       end
     end
 
+    def _retrieve_like_count_element_from_session(session)
+      doc = Nokogiri::HTML.parse(session.html)
+      doc.at_css('a.it-Actions_likeCount')
+    end
+
     def like
-      _internal_parse
-      @document.at_css('.js-likecount').text.to_i
+      session = Capybara::Session.new(:poltergeist)
+      result = session.visit(@url)
+
+      if result['status'] == 'fail'
+        session.driver.quit
+        return like
+      end
+
+      like_count_element = nil
+      while like_count_element.nil?
+        sleep(0.5)
+        like_count_element = _retrieve_like_count_element_from_session(session)
+      end
+      session.driver.quit
+      like_count_element.text.to_i
     end
 
     def hatebu
@@ -45,7 +68,7 @@ module QiitaInformation
     def date
       _internal_parse
 
-      timeElement = @document.at_css('time[itemprop="datePublished"]')
+      timeElement = @document.at_css('time[itemprop="dateModified"]') || @document.at_css('time[itemprop="datePublished"]')
       unless timeElement.nil?
         dateString = timeElement.text
       else
@@ -73,13 +96,13 @@ module QiitaInformation
       count = 1
       all_items = []
       while true do
-        f = open("http://qiita.com/#{@name}/items?page=#{count}")
+        f = open("https://qiita.com/#{@name}?page=#{count}")
         count += 1
         document = Oga.parse_html(f)
         items = document.css('.ItemLink__title a').map do |element|
           title = element.text
           url = element.get('href')
-          Item.new(title, "http://qiita.com#{url}")
+          Item.new(title, "https://qiita.com#{url}")
         end
         if items.empty?
           break
@@ -99,7 +122,7 @@ module QiitaInformation
       count = 1
       all_items = []
       while true do
-        document = Oga.parse_html(open("http://qiita.com/organizations/#{@name}/members?page=#{count}"))
+        document = Oga.parse_html(open("https://qiita.com/organizations/#{@name}/members?page=#{count}"))
         count += 1
         items = document.css('.organizationMemberList_userName').map do |user|
           User.new(user.text)
